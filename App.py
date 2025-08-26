@@ -54,3 +54,16 @@ if st.button("Generate Issues"):
 
             except Exception as e:
                 st.error(f"Error generating issues: {e}")
+from pdf2image import convert_from_bytes
+import pytesseract
+import streamlit as st
+
+uploaded_file = st.file_uploader("Upload PDF", type="pdf")
+
+if uploaded_file:
+    images = convert_from_bytes(uploaded_file.read())
+    text = ""
+    for i, img in enumerate(images, start=1):
+        text += f"--- Page {i} ---\n"
+        text += pytesseract.image_to_string(img)
+    st.text_area("PDF Text Preview", text, height=300)
