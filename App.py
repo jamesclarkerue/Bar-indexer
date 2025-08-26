@@ -77,35 +77,76 @@ with st.sidebar:
     )
 
 # --------------- PDF upload ---------------
-uploaded = st.file_uploader("Upload bar materials (PDF)", type=["pdf"])
-if uploaded:
-    try:
-        st.session_state["pdf_name"] = uploaded.name
-        pdf_bytes = uploaded.read()
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+st.markdown("### Upload bar materials (PDF)")
 
-        pages_text = []
-        for i, page in enumerate(doc, start=1):
-            text = page.get_text("text")
-            # keep a simple page marker in the stored list
-            pages_text.append(f"[Page {i}]\n{text}")
+uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 
-        st.session_state["pages_text"] = pages_text
+# Persist bytes so reruns don't lose the file
+if uploaded is not None:
+    st.session_state["pdf_name"] = uploaded.name
+    st.session_state["pdf_bytes"] = uploaded.getvalue()
 
-        st.success(f"Loaded {len(pages_text)} pages from {uploaded.name}")
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+# Controls for controlled loading
+if "pdf_bytes" in st.session_state and st.session_state["pdf_bytes"]:
+    with st.expander("Load options", expanded=True):
+        import fitz  # ensure import here in case top-level didn't run yet
+        try:
+            # peek the page count quickly
+            _tmp_doc = fitz.open(stream=st.session_state["pdf_bytes"], filetype="pdf")
+            total_pages = _tmp_doc.page_count
+            _tmp_doc.close()
+        except Exception as e:
+            total_pages = None
+            st.error(f"Could not open PDF: {e}")
+
+        if total_pages:
+            max_to_load = st.number_input(
+                "How many pages to load (start from page 1)",
+                min_value=1,
+                max_value=int(total_pages),
+                value=min(50, int(total_pages)),
+                step=1,
+                help="Start small (e.g., 30–50 pages) to verify everything works, then increase."
+            )
+            do_load = st.button("Load PDF text")
+        else:
+            do_load = False
+
+    if do_load:
+        # reset previous state
+        st.session_state["pages_text"] = []
+        try:
+            doc = fitz.open(stream=st.session_state["pdf_bytes"], filetype="pdf")
+            n = min(int(max_to_load), doc.page_count)
+
+            prog = st.progress(0.0, text="Extracting text…")
+            pages_text = []
+
+            for i in range(n):
+                page = doc[i]
+                # Try regular text; if empty (image-based), keep a marker so indexing still works
+                txt = page.get_text("text") or ""
+                pages_text.append(f"[Page {i+1}]\n{txt}")
+                if (i + 1) % 5 == 0 or i == n - 1:
+                    prog.progress((i + 1) / n, text=f"Extracting text… {i+1}/{n}")
+
+            doc.close()
+            st.session_state["pages_text"] = pages_text
+            st.success(f"Loaded {len(pages_text)} / {total_pages} pages from {st.session_state['pdf_name']}")
+        except Exception as e:
+            st.error(f"Error reading PDF: {e}")
 
 # --------------- Preview ---------------
-if st.session_state["pages_text"]:
+if st.session_state.get("pages_text"):
     colA, colB = st.columns([1, 1])
     with colA:
-        st.caption("Quick preview")
+        st.caption("Quick preview (first 3 loaded pages)")
         preview_pages = min(3, len(st.session_state["pages_text"]))
-        st.text("\n\n".join(st.session_state["pages_text"][:preview_pages]))
+        preview = "\n\n".join(st.session_state["pages_text"][:preview_pages]).strip()
+        st.text(preview if preview else "(No extractable text on these pages — they may be scanned images.)")
     with colB:
-        st.metric("Total pages", len(st.session_state["pages_text"]))
-        st.caption("Tip: adjust Pages per chunk in the sidebar for large PDFs")
+        st.metric("Pages loaded", len(st.session_state["pages_text"]))
+        st.caption("Tip: If text looks empty, the PDF may be scanned. You can still index by headings, or OCR offline then re-upload.")
 
 # --------------- Helpers ---------------
 def chunk_pages(pages: List[str], size: int) -> List[List[str]]:
