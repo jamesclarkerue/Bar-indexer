@@ -318,62 +318,82 @@ with colz:
 # --------------- Cheat sheets ---------------
 st.subheader("Step 3 • Generate cheat sheets for issues")
 
-cols = st.columns([1, 1, 2])
-with cols[0]:
-    top_k = st.number_input("Number of issues to include", 3, 50, min(len(st.session_state["issues_rows"]) or [10])[0] if st.session_state["issues_rows"] else 10)
-with cols[1]:
-    include_cases = st.checkbox("Ask for Canadian and Ontario cases", value=True)
-with cols[2]:
-    st.caption("Cheat sheets are concise quick reference notes with elements, tests, cases, pitfalls, and a short checklist.")
+issues = st.session_state.get("issues_rows", [])
+issues_count = len(issues)
 
-if st.button("Generate cheat sheets"):
-    if not st.session_state["issues_rows"]:
-        st.warning("Create or import an index first.")
-    elif client is None:
-        st.warning("OpenAI client not configured.")
-    else:
-        with st.spinner("Writing cheat sheets"):
-            selected = st.session_state["issues_rows"][: int(top_k)]
-            issues_block = "\n".join(
-                f"- {r['issue']}" + (f" [pages: {r['pages']}]" if r['pages'] else "")
-                for r in selected
-            )
-            cases_hint = "Include leading Canadian and Ontario cases where relevant with super short parentheticals." if include_cases else "Do not include case citations. Focus on elements and tests."
+if issues_count == 0:
+    st.info("Create or import an index first (Steps 1–2).")
+else:
+    # Set sane bounds for number_input
+    max_allowed = min(50, issues_count)              # cap at 50 or the number of issues, whichever is smaller
+    default_val = min(10, max_allowed)               # default to 10, but not above max_allowed
 
-            cheat_prompt = f"""Create concise bar exam cheat sheets for the following issues.
+    # If you really want a minimum of 3, make sure it's not above max_allowed
+    min_allowed = 1                                   # use 1 to avoid invalid ranges on small lists
+    # If you prefer a minimum of 3, do: min_allowed = min(3, max_allowed)
+
+    cols = st.columns([1, 1, 2])
+    with cols[0]:
+        top_k = st.number_input(
+            "Number of issues to include",
+            min_value=min_allowed,
+            max_value=max_allowed,
+            value=default_val,
+            step=1,
+        )
+    with cols[1]:
+        include_cases = st.checkbox("Include Canadian / Ontario cases", value=True)
+    with cols[2]:
+        st.caption("Cheat sheets: definition, elements/test, pitfalls, tiny checklist (and key cases if enabled).")
+
+    if st.button("Generate cheat sheets"):
+        if client is None:
+            st.warning("OpenAI client not configured.")
+        else:
+            with st.spinner("Writing cheat sheets"):
+                selected = issues[: int(top_k)]
+                issues_block = "\n".join(
+                    f"- {r['issue']}" + (f" [pages: {r['pages']}]" if r.get('pages') else "")
+                    for r in selected
+                )
+                cases_hint = (
+                    "Include leading Canadian and Ontario cases where relevant with very short parentheticals."
+                    if include_cases else
+                    "Do not include case citations. Focus on elements and tests."
+                )
+                cheat_prompt = f"""Create concise bar exam cheat sheets for the following issues.
 Use this structure for each issue:
 Issue
-Definition one or two lines
-Elements or test in clear numbered steps
+Definition (one–two lines)
+Elements or test (numbered)
 Common pitfalls or exceptions
-Very short checklist for spotting and answering on exams
+Very short checklist for spotting/answering
 {cases_hint}
 
 Issues:
 {issues_block}
 
 Keep each issue under 120 words.
-Return your result as GitHub flavored Markdown with H3 headings for each issue name.
+Return GitHub-flavored Markdown with ### headings for each issue.
 """
-            try:
-                md = call_openai(
-                    [
-                        {"role": "system", "content": "You produce compact bar exam cheat sheets. Be accurate and concise."},
-                        {"role": "user", "content": cheat_prompt},
-                    ],
-                    max_tokens=1800,
-                )
-                st.session_state["cheat_sheets_md"] = md
-                st.success("Cheat sheets created")
-            except Exception as e:
-                st.error(f"OpenAI error while creating cheat sheets: {e}")
+                try:
+                    md = call_openai(
+                        [
+                            {"role": "system", "content": "You produce compact, accurate bar exam cheat sheets."},
+                            {"role": "user", "content": cheat_prompt},
+                        ],
+                        max_tokens=1800,
+                    )
+                    st.session_state["cheat_sheets_md"] = md
+                    st.success("Cheat sheets created")
+                except Exception as e:
+                    st.error(f"OpenAI error while creating cheat sheets: {e}")
 
 # --------------- Cheat sheet editor and export ---------------
-if st.session_state["cheat_sheets_md"]:
+if st.session_state.get("cheat_sheets_md"):
     st.markdown("### Cheat sheets (editable)")
     cheat_md = st.text_area("Markdown", st.session_state["cheat_sheets_md"], height=500, key="cheat_md_area")
     st.session_state["cheat_sheets_md"] = cheat_md
-
     st.download_button(
         "Download cheat sheets as Markdown",
         st.session_state["cheat_sheets_md"],
