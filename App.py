@@ -7,6 +7,88 @@ from typing import List, Dict, Any, Tuple
 
 import streamlit as st
 import pandas as pd
+# -------- Subject presets: examples + authority hints --------
+SUBJECT_PRESETS = {
+    "Professional Responsibility": {
+        "examples": """
+- Conflict of interest — bright-line rule (current vs former client)
+- Confidentiality — exceptions (imminent risk; court order)
+- Competence & scope — accepting/withdrawing retainer; mandatory steps
+- Duty of candour to the tribunal — correcting false evidence
+- Undue influence & vulnerable client — capacity warning signs
+- Trust accounting — mixed funds; record-keeping; spot audits
+- Advertising & solicitation — permissible claims; referrals/fees
+- Civility & communications — dealing with represented persons
+- Law firm supervision — delegation; supervising non-lawyers
+""",
+        "authorities_hint": "LSO Rules of Professional Conduct; By-Laws; key discipline decisions."
+    },
+    "Civil": {
+        "examples": """
+- Appeal route from SCJ to Divisional Court — Civil
+- Summary judgment — no genuine issue requiring a trial (RCP r. 20.04)
+- Motion to strike vs judgment on pleadings — Rule 21 vs Rule 25
+- Security for costs — entitlement and factors (R. 56)
+- Interlocutory injunction — RJR-MacDonald test
+- Anton Piller order — elements and safeguards
+- Mareva injunction — freezing test and disclosure duties
+- Limitation period — discoverability under s. 5, Limitations Act, 2002
+- Standard of review on appeal — palpable & overriding error vs correctness
+""",
+        "authorities_hint": "Rules of Civil Procedure; Courts of Justice Act; Limitations Act, 2002; leading ON/CA cases (e.g., Hryniak)."
+    },
+    "Criminal": {
+        "examples": """
+- Search incident to arrest — scope limits
+- Detention vs arrest — s. 9 & 10(b) cautions; right to counsel
+- Exclusion of evidence — Grant framework (s. 24(2))
+- Warrantless search — consent or exigent circumstances
+- Admissibility of statements — voluntariness; Charter breaches
+- Bail — ladder principle; tertiary ground
+- Mens rea for murder vs manslaughter — objective vs subjective
+- Parties to an offence — aiding/abetting; common intention
+- Appeal route — summary conviction vs indictable
+""",
+        "authorities_hint": "Criminal Code; Charter; leading SCC/ONCA cases (Grant, St-Onge Lamoureux, etc.)."
+    },
+    "Family": {
+        "examples": """
+- Best interests test — parenting time/decision-making (CLRA/Divorce Act)
+- Mobility — Gordon test; material change
+- Child support — table amounts vs undue hardship
+- Spousal support — entitlement (compensatory/non-compensatory); SSAG ranges
+- Division of property — equalization; excluded assets; valuation date
+- Domestic contracts — validity; disclosure; set-aside
+- Family violence — protective orders; supervised access
+- Jurisdiction/venue — interprovincial issues; forum
+""",
+        "authorities_hint": "Divorce Act; CLRA; FLA; SSAG; key ONCA/SCC cases."
+    },
+    "Public": {
+        "examples": """
+- Judicial review — prematurity; adequate alternative remedy
+- Standard of review — reasonableness vs correctness (Vavilov)
+- Procedural fairness — duty trigger & content (Baker factors)
+- Bias & apprehension — reasonable apprehension test
+- Delegated legislation — vires; ultra vires analysis
+- Charter applicability to public bodies — s. 32
+- Remedies on JR — certiorari, mandamus, prohibition
+""",
+        "authorities_hint": "Vavilov; Dunsmuir (context); Baker; SPPA (Ontario); JRPA; Charter."
+    },
+}
+
+def subject_preset_block(subject: str) -> str:
+    p = SUBJECT_PRESETS.get(subject, {})
+    ex = p.get("examples", "").strip()
+    hint = p.get("authorities_hint", "")
+    out = ""
+    if ex:
+        out += f"\nSUBJECT-SPECIFIC EXAMPLES ({subject}):\n{ex}\n"
+    if hint:
+        out += f"\nWhen citing authorities, prefer: {hint}\n"
+    return out
+
 
 # ---------- OpenAI (v1 SDK) ----------
 try:
@@ -190,17 +272,15 @@ def chunk_pages(pages: List[str], size: int) -> List[List[str]]:
 
 # ===================== Sidebar =====================
 with st.sidebar:
-    st.header("Settings")
-    model = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini"], index=1)
-    temperature = st.slider("Temperature", 0.0, 2.0, 0.2, 0.05)
-
-    st.header("Chunking")
-    chunk_size = st.number_input("Pages per chunk", min_value=2, max_value=25, value=8, step=1)
-    max_issues = st.number_input("Max issues to keep", min_value=10, max_value=200, value=80, step=5)
-
     st.header("Extraction style")
+    subject_preset = st.selectbox(
+        "Subject preset",
+        ["Professional Responsibility", "Civil", "Criminal", "Family", "Public"],
+        index=0,
+    )
+    # Keep a free-text override too (optional)
+    subject_hint = st.text_input("Subject focus (optional override)", value=subject_preset)
     granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
-    subject_hint = st.text_input("Subject focus", value="Ontario Civil Litigation")
     require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
 
 # ===================== Session State =====================
