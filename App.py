@@ -219,17 +219,69 @@ with st.sidebar:
     granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
     require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
 
-# ===================== Upload PDF =====================
+# ===================== Upload PDF (with fallback + preview) =====================
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 pages_text: List[str] = []
+
+def extract_with_pymupdf(pdf_bytes: bytes) -> List[Tuple[int, str]]:
+    out = []
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    for i, page in enumerate(doc):
+        try:
+            out.append((i+1, page.get_text("text") or ""))
+        except Exception:
+            out.append((i+1, ""))
+    doc.close()
+    return out
+
+def extract_with_pdfminer(pdf_bytes: bytes, page_numbers: List[int]) -> Dict[int, str]:
+    # fallback only for pages that were empty
+    from pdfminer.high_level import extract_text  # requires pdfminer.six in requirements.txt
+    import io
+    tmp = io.BytesIO(pdf_bytes)
+    out = {}
+    for p in page_numbers:
+        try:
+            tmp.seek(0)
+            out[p] = extract_text(tmp, page_numbers=[p-1]) or ""
+        except Exception:
+            out[p] = ""
+    return out
+
 if uploaded:
+    pdf_bytes = uploaded.getvalue()
     try:
-        doc = fitz.open(stream=uploaded.getvalue(), filetype="pdf")
-        for i, page in enumerate(doc):
-            pages_text.append(f"[Page {i+1}]\n{page.get_text('text')}")
-        st.success(f"Loaded {len(pages_text)} pages from {uploaded.name}")
+        # First pass: PyMuPDF
+        raw = extract_with_pymupdf(pdf_bytes)
+        empty_pages = [p for (p, t) in raw if not (t and t.strip())]
+        # Fallback with pdfminer for empty pages
+        if empty_pages:
+            try:
+                pm_texts = extract_with_pdfminer(pdf_bytes, empty_pages)
+                fixed = []
+                for (p, t) in raw:
+                    if (not t or not t.strip()) and pm_texts.get(p):
+                        t = pm_texts[p]
+                    fixed.append((p, t))
+                raw = fixed
+            except Exception as e:
+                st.warning(f"pdfminer fallback failed: {e}")
+
+        pages_text = [f"[Page {p}]\n{t}" for (p, t) in raw]
+        total_chars = sum(len(t) for (_, t) in raw)
+        st.success(f"Loaded {len(pages_text)} pages from {uploaded.name} • {total_chars} chars of text")
+
+        # Quick preview + diagnostics
+        preview_n = min(2, len(pages_text))
+        st.caption("Preview of first pages (to confirm we actually have text):")
+        st.text("\n\n".join(pages_text[:preview_n])[:3000] or "(no extractable text)")
+        # If most pages are empty, tell user to OCR
+        empty_cnt = sum(1 for (_, t) in raw if not (t and t.strip()))
+        if empty_cnt >= len(raw) * 0.7:
+            st.warning("Most pages have no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
     except Exception as e:
         st.error(f"Error reading PDF: {e}")
+
 
 # ===================== Step 1: Generate Issues =====================
 st.subheader("Step 1 • Generate exam-style issues (with page refs)")
