@@ -400,3 +400,33 @@ if st.session_state.get("cheat_sheets_md"):
         file_name="cheat_sheets.md",
         mime="text/markdown",
     )
+import json, re
+
+ISSUE_STYLE_EXAMPLES = """
+Examples of acceptable 'issue' phrasing (Ontario):
+- Appeal route from SCJ to Divisional Court — Civil
+- Test for summary judgment — no genuine issue requiring a trial
+- Limitation period — discoverability under s. 5, Limitations Act, 2002
+- Motion to strike vs. motion for judgment on the pleadings — Rule 21 vs. Rule 25
+- Rule 21 motion — striking claims with no reasonable cause of action
+- Injunctive relief — RJR-MacDonald test
+- Anton Piller order — elements and safeguards
+- Mareva injunction — test and disclosure duties
+- Standard of review on appeal — palpable and overriding error vs. correctness
+- Security for costs — entitlement and factors (R. 56)
+- Summary conviction appeal route — criminal
+- Fiduciary duty — when it arises and remedies
+"""
+
+ISSUE_SCHEMA = """Return ONLY valid JSON with this shape:
+{
+  "issues": [
+    {
+      "issue": "short exam-style issue statement (must contain a specific decision/test/route/duty, not a chapter heading)",
+      "triggers": ["2-5 short spotting cues users might see in a fact pattern"],
+      "rule_or_test": "concise elements or test (Ontario)",
+      "authorities": ["Rules/statutes/cases e.g., RCP r. 20.04; Hryniak 2014 SCC 7"],
+      "pages": [int, ...]
+    }
+  ]
+}"""
