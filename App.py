@@ -9,21 +9,6 @@ import streamlit as st
 import pandas as pd
 import fitz  # PyMuPDF
 
-# ===================== Subject presets =====================
-SUBJECT_PRESETS = { ... }   # dictionary with examples + authority hints
-
-ISSUE_STYLE_EXAMPLES = """..."""
-ISSUE_SCHEMA = """..."""
-
-def subject_preset_block(subject: str) -> str:
-    ...
-def _granularity_text(level: str) -> str:
-    ...
-def build_chunk_prompt(...):
-    ...
-def build_cheat_prompt(...):
-    ...
-
 try:
     from openai import OpenAI
 except ImportError:
@@ -35,14 +20,11 @@ st.title("Bar Exam Indexer • Ontario")
 
 # ===================== OpenAI client =====================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-client = None
-if api_key and OpenAI:
-    client = OpenAI(api_key=api_key)
-
+client = OpenAI(api_key=api_key) if (api_key and OpenAI) else None
 if not client:
     st.error("No OpenAI API key configured. Add OPENAI_API_KEY in Streamlit Secrets.")
 
-# ===================== Subject presets =====================
+# ===================== Subject presets & helpers =====================
 SUBJECT_PRESETS = {
     "Professional Responsibility": {
         "examples": """
@@ -159,63 +141,6 @@ Pages:
 {joined_pages}
 """
 
-# ===================== Sidebar =====================
-with st.sidebar:
-    st.header("Settings")
-    model = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini"], index=1)
-    temperature = st.slider("Temperature", 0.0, 2.0, 0.2, 0.05)
-    chunk_size = st.number_input("Pages per chunk", min_value=2, max_value=25, value=8, step=1)
-    max_issues = st.number_input("Max issues to keep", min_value=10, max_value=200, value=80, step=5)
-
-    st.header("Extraction style")
-    subject_preset = st.selectbox("Subject preset", list(SUBJECT_PRESETS.keys()), index=0)
-    subject_hint = st.text_input("Subject focus (optional override)", value=subject_preset)
-    granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
-    require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
-
-# ===================== Upload PDF =====================
-uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
-pages_text = []
-if uploaded:
-    doc = fitz.open(stream=uploaded.getvalue(), filetype="pdf")
-    for i, page in enumerate(doc):
-        pages_text.append(f"[Page {i+1}]\n{page.get_text('text')}")
-    st.success(f"Loaded {len(pages_text)} pages from {uploaded.name}")
-
-# ===================== Generate Issues =====================
-if st.button("Generate issues"):
-    if not pages_text:
-        st.warning("Please upload a PDF first.")
-    elif not client:
-        st.warning("OpenAI client not configured.")
-    else:
-        chunks = [pages_text[i:i+chunk_size] for i in range(0, len(pages_text), chunk_size)]
-        all_rows = []
-        for idx, ch in enumerate(chunks, start=1):
-            joined = "\n\n".join(ch)
-            prompt = build_chunk_prompt(joined, granularity, subject_hint, require_authorities, subject_preset)
-            resp = client.chat.completions.create(
-                model=model,
-                temperature=temperature,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1400,
-            )
-            out = resp.choices[0].message.content.strip()
-            try:
-                data = json.loads(out)
-                rows = data.get("issues", [])
-            except:
-                rows = []
-            all_rows.extend(rows)
-        st.session_state["issues_rows"] = all_rows
-        st.success(f"Extracted {len(all_rows)} issues.")
-
-# ===================== Review/Edit =====================
-if "issues_rows" in st.session_state and st.session_state["issues_rows"]:
-    df = pd.DataFrame(st.session_state["issues_rows"])
-    edited = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-    st.session_state["issues_rows"] = edited.to_dict("records")
-    st.download_button("Download index as CSV", df.to_csv(index=False), "bar_index.csv")
 # -------- Cheat sheet prompt builder (subject-aware) --------
 CHEAT_GENERIC_STYLE = """
 Write compact exam cheat sheets. For each issue:
@@ -248,28 +173,24 @@ CHEAT_SUBJECT_TIPS = {
 }
 
 def build_cheat_prompt(
-    selected_rows: list[dict],
+    selected_rows: List[Dict],
     subject_name: str,
     subject_hint: str,
     include_cases: bool,
 ) -> str:
-    # assemble the issues block with structured hints (rule/test, authorities, pages)
     issues_block = "\n".join(
-        "- " + r.get("issue","").strip()
+        "- " + (r.get("issue","").strip())
         + (f"\n  Rule/Test: {r['rule_or_test']}" if r.get("rule_or_test") else "")
         + (f"\n  Authorities: {r['authorities']}" if r.get("authorities") else "")
         + (f"\n  Pages: {r['pages']}" if r.get("pages") else "")
         for r in selected_rows if r.get("issue")
     )
-
     cases_hint = (
         "When helpful, include 1–2 key Ontario/Canadian cases or rule/statute cites (super short parentheticals)."
         if include_cases else
         "Do not include case citations; focus on elements/tests."
     )
-
     subject_tips = CHEAT_SUBJECT_TIPS.get(subject_name, "")
-
     return f"""Create concise Ontario bar exam cheat sheets for the following **{subject_hint}** issues.
 
 {CHEAT_GENERIC_STYLE}
@@ -280,6 +201,149 @@ Subject tips:
 Issues:
 {issues_block}
 
-Return GitHub-flavored Markdown with `###` headings for each issue name.
+Return GitHub-flavored Markdown with ### headings for each issue name.
 Keep language exam-ready and precise. Do not exceed ~120 words per issue.
 """
+
+# ===================== Sidebar =====================
+with st.sidebar:
+    st.header("Settings")
+    model = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini"], index=1)
+    temperature = st.slider("Temperature", 0.0, 2.0, 0.2, 0.05)
+    chunk_size = st.number_input("Pages per chunk", min_value=2, max_value=25, value=8, step=1)
+    max_issues = st.number_input("Max issues to keep", min_value=10, max_value=200, value=80, step=5)
+
+    st.header("Extraction style")
+    subject_preset = st.selectbox("Subject preset", list(SUBJECT_PRESETS.keys()), index=0)
+    subject_hint = st.text_input("Subject focus (optional override)", value=subject_preset)
+    granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
+    require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
+
+# ===================== Upload PDF =====================
+uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
+pages_text: List[str] = []
+if uploaded:
+    try:
+        doc = fitz.open(stream=uploaded.getvalue(), filetype="pdf")
+        for i, page in enumerate(doc):
+            pages_text.append(f"[Page {i+1}]\n{page.get_text('text')}")
+        st.success(f"Loaded {len(pages_text)} pages from {uploaded.name}")
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
+
+# ===================== Step 1: Generate Issues =====================
+st.subheader("Step 1 • Generate exam-style issues (with page refs)")
+
+if st.button("Generate issues"):
+    if not pages_text:
+        st.warning("Please upload a PDF first.")
+    elif not client:
+        st.warning("OpenAI client not configured.")
+    else:
+        chunks = [pages_text[i:i+int(chunk_size)] for i in range(0, len(pages_text), int(chunk_size))]
+        all_rows: List[Dict] = []
+        for idx, ch in enumerate(chunks, start=1):
+            joined = "\n\n".join(ch)
+            prompt = build_chunk_prompt(joined, granularity, subject_hint, require_authorities, subject_preset)
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    messages=[
+                        {"role": "system", "content": "You extract exam issues for the Ontario bar. Be precise and practical."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=1400,
+                )
+                out = resp.choices[0].message.content.strip()
+                try:
+                    data = json.loads(out)
+                    rows = data.get("issues", [])
+                except Exception:
+                    rows = []
+                if not rows:
+                    st.warning(f"Chunk {idx}: no issues parsed.")
+                all_rows.extend(rows)
+            except Exception as e:
+                st.error(f"OpenAI error on chunk {idx}: {e}")
+                break
+
+        st.session_state["issues_rows"] = all_rows[: int(max_issues)]
+        st.success(f"Extracted {len(st.session_state['issues_rows'])} issues.")
+
+# ===================== Step 2: Review/Edit =====================
+st.subheader("Step 2 • Review and edit the index")
+
+if st.session_state.get("issues_rows"):
+    df = pd.DataFrame(st.session_state["issues_rows"])
+    edited = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "issue": st.column_config.TextColumn("Issue (exam-style)", width="medium"),
+            "triggers": st.column_config.TextColumn("Spotting triggers", width="medium"),
+            "rule_or_test": st.column_config.TextColumn("Rule / test (concise)", width="large"),
+            "authorities": st.column_config.TextColumn("Authorities (rules/statutes/cases)", width="large"),
+            "pages": st.column_config.TextColumn("Pages", width="small"),
+        },
+    )
+    st.session_state["issues_rows"] = edited.to_dict("records")
+    # Downloads
+    st.download_button("Download index as CSV", pd.DataFrame(st.session_state["issues_rows"]).to_csv(index=False), "bar_index.csv", mime="text/csv")
+
+# ===================== Step 3 • Generate cheat sheets (subject-aware) =====================
+st.subheader("Step 3 • Generate cheat sheets for issues")
+
+issues = st.session_state.get("issues_rows", [])
+n_issues = len(issues)
+
+if n_issues == 0:
+    st.info("Create or import an index first (Steps 1–2).")
+else:
+    max_allowed = min(50, n_issues)
+    default_val = min(10, max_allowed)
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        top_k = st.number_input(
+            "Number of issues to include",
+            min_value=1, max_value=max_allowed, value=default_val, step=1,
+        )
+    with c2:
+        include_cases = st.checkbox("Include cases / rule cites", value=True)
+    with c3:
+        st.caption(f"Cheat sheets are tailored for **{subject_preset}** (set in the sidebar).")
+
+    if st.button("Generate cheat sheets"):
+        if client is None:
+            st.warning("OpenAI client not configured.")
+        else:
+            selected = issues[: int(top_k)]
+            cheat_prompt = build_cheat_prompt(
+                selected_rows=selected,
+                subject_name=subject_preset,
+                subject_hint=subject_hint,
+                include_cases=include_cases,
+            )
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    messages=[
+                        {"role": "system", "content": "You produce compact, accurate bar exam cheat sheets."},
+                        {"role": "user", "content": cheat_prompt},
+                    ],
+                    max_tokens=1800,
+                )
+                md = resp.choices[0].message.content.strip()
+                st.session_state["cheat_sheets_md"] = md
+                st.success("Cheat sheets created")
+            except Exception as e:
+                st.error(f"OpenAI error while creating cheat sheets: {e}")
+
+if st.session_state.get("cheat_sheets_md"):
+    st.markdown("### Cheat sheets (editable)")
+    cheat_md = st.text_area("Markdown", st.session_state["cheat_sheets_md"], height=500, key="cheat_md_area")
+    st.session_state["cheat_sheets_md"] = cheat_md
+    st.download_button("Download cheat sheets as Markdown", st.session_state["cheat_sheets_md"], "cheat_sheets.md", mime="text/markdown")
