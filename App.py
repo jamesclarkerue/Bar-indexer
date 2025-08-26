@@ -6,7 +6,7 @@ import openai
 st.title("Bar Exam Indexer - AI Issue Generator")
 
 # OpenAI API key (set as environment variable in Streamlit Cloud for safety)
-openai.api_key = st.secrets["OPENAI_API_KEY"]  # OR set locally: openai.api_key = "YOUR_KEY"
+openai.api_key = st.secrets["OPENAI_API_KEY"]  # Do NOT hardcode your key
 
 uploaded_file = st.file_uploader("Upload your exam materials (PDF)", type="pdf")
 
