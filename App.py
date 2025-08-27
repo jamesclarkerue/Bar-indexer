@@ -10,9 +10,9 @@ import pandas as pd
 import fitz  # PyMuPDF
 
 try:
-    from openai import OpenAI
+    import openai
 except ImportError:
-    OpenAI = None
+    openai = None
 
 # ===================== Config =====================
 st.set_page_config(page_title="Bar Exam Indexer — Ontario", layout="wide")
@@ -20,9 +20,16 @@ st.title("Bar Exam Indexer • Ontario")
 
 # ===================== OpenAI client =====================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if (api_key and OpenAI) else None
-if not client:
-    st.error("No OpenAI API key configured. Add OPENAI_API_KEY in Streamlit Secrets.")
+if not api_key or openai is None:
+    client = None
+    st.error("No OpenAI API key configured or openai module missing. Add OPENAI_API_KEY in Streamlit Secrets and ensure openai is installed.")
+else:
+    try:
+        openai.api_key = api_key  # For openai-python 1.x and 0.x compatibility
+        client = openai
+    except Exception as e:
+        client = None
+        st.error(f"OpenAI client error: {e}")
 
 # ===================== Subject presets & helpers =====================
 SUBJECT_PRESETS = {
@@ -208,7 +215,8 @@ Keep language exam-ready and precise. Do not exceed ~120 words per issue.
 # ===================== Sidebar =====================
 with st.sidebar:
     st.header("Settings")
-    model = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini"], index=1)
+    # Only show actual available models
+    model = st.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"], index=0)
     temperature = st.slider("Temperature", 0.0, 2.0, 0.2, 0.05)
     chunk_size = st.number_input("Pages per chunk", min_value=2, max_value=25, value=8, step=1)
     max_issues = st.number_input("Max issues to keep", min_value=10, max_value=200, value=80, step=5)
@@ -223,7 +231,6 @@ with st.sidebar:
     debug_show_raw = st.checkbox("Show raw model output per chunk", value=False)
 
 # ===================== Upload PDF (with fallback + preview) =====================
-# keep pages in session so they survive reruns
 if "pages_text" not in st.session_state:
     st.session_state["pages_text"] = []
 
@@ -246,26 +253,22 @@ def extract_with_pdfminer_if_available(pdf_bytes: bytes, page_numbers: List[int]
         from pdfminer.high_level import extract_text  # requires pdfminer.six
     except Exception:
         return {}
-    import io
     tmp = io.BytesIO(pdf_bytes)
     out: Dict[int, str] = {}
     for p in page_numbers:
         try:
             tmp.seek(0)
             out[p] = extract_text(tmp, page_numbers=[p - 1]) or ""
-        except Exception:
+        except Exception as e:
+            st.warning(f"pdfminer error on page {p}: {e}")
             out[p] = ""
     return out
 
 if uploaded is not None:
     try:
         pdf_bytes = uploaded.getvalue()
-
-        # First pass: PyMuPDF
         raw = extract_with_pymupdf(pdf_bytes)
         empty_pages = [p for (p, t) in raw if not (t and t.strip())]
-
-        # Fallback: pdfminer only for empty pages (if available)
         if empty_pages:
             pm_texts = extract_with_pdfminer_if_available(pdf_bytes, empty_pages)
             if pm_texts:
@@ -278,23 +281,16 @@ if uploaded is not None:
             else:
                 st.info("pdfminer.six not installed or fallback unavailable. If many pages are blank, run OCR and re-upload.")
 
-        # Save to session
         st.session_state["pages_text"] = [f"[Page {p}]\n{t}" for (p, t) in raw]
-
-        # Diagnostics
         total_chars = sum(len(t) for (_, t) in raw)
         st.success(f"Loaded {len(st.session_state['pages_text'])} pages from {uploaded.name} • {total_chars} characters extracted")
-
         preview_n = min(2, len(st.session_state["pages_text"]))
         st.caption("Preview (to confirm we actually have text):")
         st.text("\n\n".join(st.session_state["pages_text"][:preview_n])[:3000] or "(no extractable text)")
-
         empty_cnt = sum(1 for (_, t) in raw if not (t and t.strip()))
         if empty_cnt >= max(1, int(len(raw) * 0.7)):
             st.warning("Most pages had no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
-
     except Exception as e:
-        # Never let this crash the rest of the UI
         st.error(f"Error reading PDF: {e}")
 
 # ===================== Step 1 • Generate exam-style issues (with page refs) =====================
@@ -302,6 +298,12 @@ st.subheader("Step 1 • Generate exam-style issues (with page refs)")
 
 def parse_rows_from_json(txt: str) -> List[Dict]:
     try:
+        # Remove ```json or ``` if present
+        txt = re.sub(r"^```json|^```|```$", "", txt.strip(), flags=re.MULTILINE)
+        # Extract JSON block if mixed with prose
+        match = re.search(r"(\{[\s\S]+\})", txt)
+        if match:
+            txt = match.group(1)
         data = json.loads(txt)
         rows = data.get("issues", [])
         if isinstance(rows, list):
@@ -339,7 +341,6 @@ if st.button("Generate issues"):
                         st.text(content[:8000])
 
             try:
-                # Pass 1: normal
                 resp = client.chat.completions.create(
                     model=model,
                     temperature=temperature,
@@ -420,14 +421,24 @@ if st.session_state.get("issues_rows"):
             "authorities": st.column_config.TextColumn("Authorities (rules/statutes/cases)", width="large"),
             "pages": st.column_config.TextColumn("Pages", width="small"),
         },
+        key="data_editor_issues",
     )
     st.session_state["issues_rows"] = edited.to_dict("records")
-    st.download_button(
-        "Download index as CSV",
-        pd.DataFrame(st.session_state["issues_rows"]).to_csv(index=False),
-        "bar_index.csv",
-        mime="text/csv",
-    )
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "Download index as CSV",
+            pd.DataFrame(st.session_state["issues_rows"]).to_csv(index=False),
+            "bar_index.csv",
+            mime="text/csv",
+        )
+    with c2:
+        st.download_button(
+            "Download index as Markdown",
+            pd.DataFrame(st.session_state["issues_rows"]).to_markdown(index=False),
+            "bar_index.md",
+            mime="text/markdown",
+        )
 
 # ===================== Step 3 • Generate cheat sheets (subject-aware) =====================
 st.subheader("Step 3 • Generate cheat sheets for issues")
