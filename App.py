@@ -218,6 +218,7 @@ with st.sidebar:
     subject_hint = st.text_input("Subject focus (optional override)", value=subject_preset)
     granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
     require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
+
     st.header("Debug")
     debug_show_raw = st.checkbox("Show raw model output per chunk", value=False)
 
@@ -240,7 +241,7 @@ def extract_with_pymupdf(pdf_bytes: bytes) -> List[Tuple[int, str]]:
     return out
 
 def extract_with_pdfminer_if_available(pdf_bytes: bytes, page_numbers: List[int]) -> Dict[int, str]:
-    """Try pdfminer fallback; if unavailable, return empty {} without raising."""
+    """Try pdfminer fallback; if unavailable, return {} without raising."""
     try:
         from pdfminer.high_level import extract_text  # requires pdfminer.six
     except Exception:
@@ -402,8 +403,8 @@ Return AT LEAST 10 items in the same JSON schema (never an empty list).
             st.success(f"Extracted {len(st.session_state['issues_rows'])} issues.")
         else:
             st.error("No issues were extracted. Check the preview above — if it’s mostly blank, run OCR on your PDF and try again.")
-            
- Step 2: Review/Edit =====================
+
+# ===================== Step 2 • Review and edit the index =====================
 st.subheader("Step 2 • Review and edit the index")
 
 if st.session_state.get("issues_rows"):
@@ -421,8 +422,12 @@ if st.session_state.get("issues_rows"):
         },
     )
     st.session_state["issues_rows"] = edited.to_dict("records")
-    # Downloads
-    st.download_button("Download index as CSV", pd.DataFrame(st.session_state["issues_rows"]).to_csv(index=False), "bar_index.csv", mime="text/csv")
+    st.download_button(
+        "Download index as CSV",
+        pd.DataFrame(st.session_state["issues_rows"]).to_csv(index=False),
+        "bar_index.csv",
+        mime="text/csv",
+    )
 
 # ===================== Step 3 • Generate cheat sheets (subject-aware) =====================
 st.subheader("Step 3 • Generate cheat sheets for issues")
@@ -478,4 +483,9 @@ if st.session_state.get("cheat_sheets_md"):
     st.markdown("### Cheat sheets (editable)")
     cheat_md = st.text_area("Markdown", st.session_state["cheat_sheets_md"], height=500, key="cheat_md_area")
     st.session_state["cheat_sheets_md"] = cheat_md
-    st.download_button("Download cheat sheets as Markdown", st.session_state["cheat_sheets_md"], "cheat_sheets.md", mime="text/markdown")
+    st.download_button(
+        "Download cheat sheets as Markdown",
+        st.session_state["cheat_sheets_md"],
+        "cheat_sheets.md",
+        mime="text/markdown",
+    )
