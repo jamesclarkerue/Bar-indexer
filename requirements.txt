@@ -3,3 +3,4 @@ PyMuPDF
 openai>=1.0.0
 pandas
 pdfminer.six
+tabulate
