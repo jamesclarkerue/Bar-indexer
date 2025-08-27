@@ -218,6 +218,8 @@ with st.sidebar:
     subject_hint = st.text_input("Subject focus (optional override)", value=subject_preset)
     granularity = st.selectbox("Granularity", ["Fine (exam spotting)", "Medium", "Coarse"], index=0)
     require_authorities = st.checkbox("Include statutes/rules/cases", value=True)
+    st.header("Debug")
+    debug_show_raw = st.checkbox("Show raw model output per chunk", value=False)
 
 # ===================== Upload PDF (with fallback + preview) =====================
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
@@ -286,6 +288,26 @@ if uploaded:
 # ===================== Step 1: Generate Issues =====================
 st.subheader("Step 1 • Generate exam-style issues (with page refs)")
 
+def parse_rows_from_json(txt: str) -> List[Dict]:
+    try:
+        data = json.loads(txt)
+        rows = data.get("issues", [])
+        if isinstance(rows, list):
+            # normalize fields
+            normed = []
+            for it in rows:
+                normed.append({
+                    "issue": (it.get("issue") or "").strip(),
+                    "triggers": "; ".join(it.get("triggers") or []),
+                    "rule_or_test": (it.get("rule_or_test") or "").strip(),
+                    "authorities": "; ".join(it.get("authorities") or []),
+                    "pages": ", ".join(str(p) for p in (it.get("pages") or [])),
+                })
+            return [r for r in normed if r["issue"]]
+    except Exception:
+        pass
+    return []
+
 if st.button("Generate issues"):
     if not pages_text:
         st.warning("Please upload a PDF first.")
@@ -294,34 +316,81 @@ if st.button("Generate issues"):
     else:
         chunks = [pages_text[i:i+int(chunk_size)] for i in range(0, len(pages_text), int(chunk_size))]
         all_rows: List[Dict] = []
+
         for idx, ch in enumerate(chunks, start=1):
             joined = "\n\n".join(ch)
             prompt = build_chunk_prompt(joined, granularity, subject_hint, require_authorities, subject_preset)
+
+            def show_raw(label, content):
+                if debug_show_raw:
+                    with st.expander(f"Chunk {idx} • {label} (raw)"):
+                        st.text(content[:8000])
+
             try:
+                # Pass 1: normal
                 resp = client.chat.completions.create(
                     model=model,
                     temperature=temperature,
                     messages=[
-                        {"role": "system", "content": "You extract exam issues for the Ontario bar. Be precise and practical."},
+                        {"role": "system", "content": "You extract exam issues for the Ontario bar. Be precise and practical. Return JSON."},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=1400,
+                    max_tokens=1500,
                 )
                 out = resp.choices[0].message.content.strip()
-                try:
-                    data = json.loads(out)
-                    rows = data.get("issues", [])
-                except Exception:
-                    rows = []
+                show_raw("pass 1", out)
+                rows = parse_rows_from_json(out)
+
+                # Pass 2: strict JSON retry
                 if not rows:
-                    st.warning(f"Chunk {idx}: no issues parsed.")
-                all_rows.extend(rows)
+                    resp2 = client.chat.completions.create(
+                        model=model,
+                        temperature=temperature,
+                        messages=[
+                            {"role": "system", "content": "Return ONLY the JSON object that matches the schema. No prose."},
+                            {"role": "user", "content": prompt + "\n\nReturn ONLY the JSON object, nothing else."},
+                        ],
+                        max_tokens=1500,
+                    )
+                    out2 = resp2.choices[0].message.content.strip()
+                    show_raw("pass 2 (strict JSON)", out2)
+                    rows = parse_rows_from_json(out2)
+
+                # Pass 3: never-empty fallback (infer from headings/TOC)
+                if not rows:
+                    fallback_prompt = prompt + """
+IMPORTANT FALLBACK:
+If the content is a cover, preface, overview, or TOC, infer procedural/contextual issues a candidate needs from that section
+(e.g., motion types & tests (R. 20, R. 21), appeal routes/standards, limitation/discoverability, filing/service timelines, evidentiary burdens, remedies).
+Return AT LEAST 10 items in the same JSON schema (never an empty list).
+"""
+                    resp3 = client.chat.completions.create(
+                        model=model,
+                        temperature=temperature,
+                        messages=[
+                            {"role": "system", "content": "Return ONLY the JSON object that matches the schema. No prose."},
+                            {"role": "user", "content": fallback_prompt + "\n\nReturn ONLY the JSON object, nothing else."},
+                        ],
+                        max_tokens=1500,
+                    )
+                    out3 = resp3.choices[0].message.content.strip()
+                    show_raw("pass 3 (forced fallback)", out3)
+                    rows = parse_rows_from_json(out3)
+
+                if not rows:
+                    st.warning(f"Chunk {idx}: no issues parsed after 3 passes.")
+                else:
+                    all_rows.extend(rows)
+
             except Exception as e:
                 st.error(f"OpenAI error on chunk {idx}: {e}")
                 break
 
         st.session_state["issues_rows"] = all_rows[: int(max_issues)]
-        st.success(f"Extracted {len(st.session_state['issues_rows'])} issues.")
+        if st.session_state["issues_rows"]:
+            st.success(f"Extracted {len(st.session_state['issues_rows'])} issues.")
+        else:
+            st.error("No issues were extracted. Check the preview above — if it’s mostly blank, run OCR on your PDF and try again.")
 
 # ===================== Step 2: Review/Edit =====================
 st.subheader("Step 2 • Review and edit the index")
