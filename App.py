@@ -222,70 +222,81 @@ with st.sidebar:
     debug_show_raw = st.checkbox("Show raw model output per chunk", value=False)
 
 # ===================== Upload PDF (with fallback + preview) =====================
+# keep pages in session so they survive reruns
+if "pages_text" not in st.session_state:
+    st.session_state["pages_text"] = []
+
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
-pages_text: List[str] = []
 
 def extract_with_pymupdf(pdf_bytes: bytes) -> List[Tuple[int, str]]:
-    out = []
+    out: List[Tuple[int, str]] = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     for i, page in enumerate(doc):
         try:
-            out.append((i+1, page.get_text("text") or ""))
+            out.append((i + 1, page.get_text("text") or ""))
         except Exception:
-            out.append((i+1, ""))
+            out.append((i + 1, ""))
     doc.close()
     return out
 
-def extract_with_pdfminer(pdf_bytes: bytes, page_numbers: List[int]) -> Dict[int, str]:
-    # fallback only for pages that were empty
-    from pdfminer.high_level import extract_text  # requires pdfminer.six in requirements.txt
+def extract_with_pdfminer_if_available(pdf_bytes: bytes, page_numbers: List[int]) -> Dict[int, str]:
+    """Try pdfminer fallback; if unavailable, return empty {} without raising."""
+    try:
+        from pdfminer.high_level import extract_text  # requires pdfminer.six
+    except Exception:
+        return {}
     import io
     tmp = io.BytesIO(pdf_bytes)
-    out = {}
+    out: Dict[int, str] = {}
     for p in page_numbers:
         try:
             tmp.seek(0)
-            out[p] = extract_text(tmp, page_numbers=[p-1]) or ""
+            out[p] = extract_text(tmp, page_numbers=[p - 1]) or ""
         except Exception:
             out[p] = ""
     return out
 
-if uploaded:
-    pdf_bytes = uploaded.getvalue()
+if uploaded is not None:
     try:
+        pdf_bytes = uploaded.getvalue()
+
         # First pass: PyMuPDF
         raw = extract_with_pymupdf(pdf_bytes)
         empty_pages = [p for (p, t) in raw if not (t and t.strip())]
-        # Fallback with pdfminer for empty pages
+
+        # Fallback: pdfminer only for empty pages (if available)
         if empty_pages:
-            try:
-                pm_texts = extract_with_pdfminer(pdf_bytes, empty_pages)
-                fixed = []
+            pm_texts = extract_with_pdfminer_if_available(pdf_bytes, empty_pages)
+            if pm_texts:
+                fixed: List[Tuple[int, str]] = []
                 for (p, t) in raw:
                     if (not t or not t.strip()) and pm_texts.get(p):
                         t = pm_texts[p]
                     fixed.append((p, t))
                 raw = fixed
-            except Exception as e:
-                st.warning(f"pdfminer fallback failed: {e}")
+            else:
+                st.info("pdfminer.six not installed or fallback unavailable. If many pages are blank, run OCR and re-upload.")
 
-        pages_text = [f"[Page {p}]\n{t}" for (p, t) in raw]
+        # Save to session
+        st.session_state["pages_text"] = [f"[Page {p}]\n{t}" for (p, t) in raw]
+
+        # Diagnostics
         total_chars = sum(len(t) for (_, t) in raw)
-        st.success(f"Loaded {len(pages_text)} pages from {uploaded.name} • {total_chars} chars of text")
+        st.success(f"Loaded {len(st.session_state['pages_text'])} pages from {uploaded.name} • {total_chars} characters extracted")
 
-        # Quick preview + diagnostics
-        preview_n = min(2, len(pages_text))
-        st.caption("Preview of first pages (to confirm we actually have text):")
-        st.text("\n\n".join(pages_text[:preview_n])[:3000] or "(no extractable text)")
-        # If most pages are empty, tell user to OCR
+        preview_n = min(2, len(st.session_state["pages_text"]))
+        st.caption("Preview (to confirm we actually have text):")
+        st.text("\n\n".join(st.session_state["pages_text"][:preview_n])[:3000] or "(no extractable text)")
+
         empty_cnt = sum(1 for (_, t) in raw if not (t and t.strip()))
-        if empty_cnt >= len(raw) * 0.7:
-            st.warning("Most pages have no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
+        if empty_cnt >= max(1, int(len(raw) * 0.7)):
+            st.warning("Most pages had no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
+
     except Exception as e:
+        # Never let this crash the rest of the UI
         st.error(f"Error reading PDF: {e}")
 
-
-# ===================== Step 1: Generate Issues =====================
+# ===================== Step 1 • Generate exam-style issues (with page refs) =====================
 st.subheader("Step 1 • Generate exam-style issues (with page refs)")
 
 def parse_rows_from_json(txt: str) -> List[Dict]:
@@ -293,7 +304,6 @@ def parse_rows_from_json(txt: str) -> List[Dict]:
         data = json.loads(txt)
         rows = data.get("issues", [])
         if isinstance(rows, list):
-            # normalize fields
             normed = []
             for it in rows:
                 normed.append({
@@ -309,12 +319,13 @@ def parse_rows_from_json(txt: str) -> List[Dict]:
     return []
 
 if st.button("Generate issues"):
+    pages_text = st.session_state.get("pages_text", [])
     if not pages_text:
-        st.warning("Please upload a PDF first.")
+        st.warning("Please upload a PDF first (and confirm the preview shows text).")
     elif not client:
         st.warning("OpenAI client not configured.")
     else:
-        chunks = [pages_text[i:i+int(chunk_size)] for i in range(0, len(pages_text), int(chunk_size))]
+        chunks = [pages_text[i:i + int(chunk_size)] for i in range(0, len(pages_text), int(chunk_size))]
         all_rows: List[Dict] = []
 
         for idx, ch in enumerate(chunks, start=1):
@@ -356,7 +367,7 @@ if st.button("Generate issues"):
                     show_raw("pass 2 (strict JSON)", out2)
                     rows = parse_rows_from_json(out2)
 
-                # Pass 3: never-empty fallback (infer from headings/TOC)
+                # Pass 3: never-empty fallback
                 if not rows:
                     fallback_prompt = prompt + """
 IMPORTANT FALLBACK:
@@ -391,8 +402,8 @@ Return AT LEAST 10 items in the same JSON schema (never an empty list).
             st.success(f"Extracted {len(st.session_state['issues_rows'])} issues.")
         else:
             st.error("No issues were extracted. Check the preview above — if it’s mostly blank, run OCR on your PDF and try again.")
-
-# ===================== Step 2: Review/Edit =====================
+            
+ Step 2: Review/Edit =====================
 st.subheader("Step 2 • Review and edit the index")
 
 if st.session_state.get("issues_rows"):
