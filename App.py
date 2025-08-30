@@ -582,7 +582,8 @@ if st.session_state.get("enhanced_chart"):
         "Download Enhanced Chart as Word (.docx)",
         data=docx_io,
         file_name="enhanced_chart.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        key="enhanced_chart_docx_btn"
     )
 
     # Markdown download (optional: keep for reference)
@@ -591,4 +592,5 @@ if st.session_state.get("enhanced_chart"):
         st.session_state["enhanced_chart"],
         "enhanced_chart.md",
         mime="text/markdown",
+        key="enhanced_chart_md_btn"
     )
