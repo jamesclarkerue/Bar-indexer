@@ -594,3 +594,75 @@ if st.session_state.get("enhanced_chart"):
         mime="text/markdown",
         key="enhanced_chart_md_btn"
     )
+import streamlit as st
+import io
+from docx import Document
+
+def generate_study_notes_prompt(issue_name, rule, authorities):
+    prompt = (
+        f"Write concise, exam-focused study notes for the following bar exam topic.\n"
+        f"Issue: {issue_name}\n"
+        f"Rule/Test: {rule}\n"
+        f"Authorities: {authorities}\n"
+        "Include key principles, rationale, important cases/statutes, and tips for exam success. Use clear bullet points."
+    )
+    return prompt
+
+def notes_to_docx(notes_dict):
+    doc = Document()
+    doc.add_heading("Bar Exam Study Notes", level=0)
+    for issue, notes in notes_dict.items():
+        doc.add_heading(issue, level=1)
+        doc.add_paragraph(notes)
+    return doc
+
+# Main Study Notes Section
+if st.session_state.get("issues_rows"):
+    st.markdown("## Study Notes")
+    notes_dict = st.session_state.get("study_notes_dict", {})
+    for idx, issue_row in enumerate(st.session_state["issues_rows"]):
+        issue = issue_row.get("issue", f"Issue {idx+1}")
+        rule = issue_row.get("rule_or_test", "")
+        authorities = issue_row.get("authorities", "")
+
+        st.markdown(f"**{issue}**")
+        default_notes = notes_dict.get(issue, "")
+        notes = st.text_area(f"Study Notes for {issue}", value=default_notes, key=f"notes_{idx}")
+
+        # Generate button
+        if st.button(f"Generate Study Notes for {issue}", key=f"gen_notes_{idx}"):
+            if client is None:
+                st.warning("OpenAI client not configured.")
+            else:
+                prompt = generate_study_notes_prompt(issue, rule, authorities)
+                with st.spinner("Generating notes..."):
+                    resp = client.chat.completions.create(
+                        model=model,
+                        temperature=temperature,
+                        messages=[
+                            {"role": "system", "content": "You are a legal bar exam coach who writes smart, concise, practical study notes."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=500,
+                    )
+                    notes = resp.choices[0].message.content.strip()
+                    st.session_state.setdefault("study_notes_dict", {})[issue] = notes
+                    st.success("Study notes generated!")
+                    st.experimental_rerun()  # Refresh to update textarea
+
+        # Save edited notes
+        st.session_state.setdefault("study_notes_dict", {})[issue] = notes
+
+    # Download all notes as Word
+    if st.session_state.get("study_notes_dict"):
+        doc = notes_to_docx(st.session_state["study_notes_dict"])
+        docx_io = io.BytesIO()
+        doc.save(docx_io)
+        docx_io.seek(0)
+        st.download_button(
+            "Download All Study Notes as Word (.docx)",
+            data=docx_io,
+            file_name="study_notes.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="study_notes_docx_btn"
+        )
