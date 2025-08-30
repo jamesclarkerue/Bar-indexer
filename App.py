@@ -648,7 +648,6 @@ if st.session_state.get("issues_rows"):
                     notes = resp.choices[0].message.content.strip()
                     st.session_state.setdefault("study_notes_dict", {})[issue] = notes
                     st.success("Study notes generated!")
-                    st.experimental_rerun()  # Refresh to update textarea
 
         # Save edited notes
         st.session_state.setdefault("study_notes_dict", {})[issue] = notes
