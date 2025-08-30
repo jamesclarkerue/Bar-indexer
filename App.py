@@ -543,3 +543,52 @@ if st.session_state.get("cheat_sheets_md"):
                 "enhanced_chart.md",
                 mime="text/markdown",
             )
+import io
+from docx import Document
+
+def markdown_to_docx(md_text):
+    """Simple function to convert markdown to docx. Handles headings, bold, italics, lists, and plain text."""
+    doc = Document()
+    lines = md_text.splitlines()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            doc.add_paragraph("")  # Blank line
+        elif line.startswith("### "):  # H3
+            doc.add_heading(line[4:], level=3)
+        elif line.startswith("## "):  # H2
+            doc.add_heading(line[3:], level=2)
+        elif line.startswith("# "):  # H1
+            doc.add_heading(line[2:], level=1)
+        elif line.startswith("- "):  # Bullet list
+            doc.add_paragraph(line[2:], style='List Bullet')
+        elif line.startswith("1. "):  # Numbered list
+            doc.add_paragraph(line[3:], style='List Number')
+        else:
+            doc.add_paragraph(line)
+    return doc
+
+# Inside your Enhanced Chart Mode display section:
+if st.session_state.get("enhanced_chart"):
+    st.markdown("#### Enhanced Chart Output")
+    st.markdown(st.session_state["enhanced_chart"])
+
+    # DOCX download
+    doc = markdown_to_docx(st.session_state["enhanced_chart"])
+    docx_io = io.BytesIO()
+    doc.save(docx_io)
+    docx_io.seek(0)
+    st.download_button(
+        "Download Enhanced Chart as Word (.docx)",
+        data=docx_io,
+        file_name="enhanced_chart.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+    # Markdown download (optional: keep for reference)
+    st.download_button(
+        "Download Enhanced Chart as Markdown",
+        st.session_state["enhanced_chart"],
+        "enhanced_chart.md",
+        mime="text/markdown",
+    )
