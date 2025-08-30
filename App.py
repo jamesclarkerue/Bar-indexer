@@ -500,3 +500,46 @@ if st.session_state.get("cheat_sheets_md"):
         "cheat_sheets.md",
         mime="text/markdown",
     )
+    # --- Enhanced Chart Mode ---
+    st.markdown("---")
+    st.markdown("#### Enhanced Chart Mode (Optional)")
+    enhanced_chart_mode = st.checkbox("Enable Enhanced Chart Mode", value=False)
+    if enhanced_chart_mode:
+        if st.button("Create Chart"):
+            if client is None:
+                st.warning("OpenAI client not configured.")
+            else:
+                chart_prompt = (
+                    "Take this cheat sheet and create an enhanced Cheat Sheet. "
+                    "1) include key legal principles, cases, statutes, and concise notes "
+                    "2) organize clearly for quick study and review "
+                    "3) keep bullet-point style, readable and compact. "
+                    f"Cheat Sheet Input:\n{st.session_state['cheat_sheets_md']}"
+                )
+                try:
+                    with st.spinner("Creating enhanced chart..."):
+                        resp = client.chat.completions.create(
+                            model=model,
+                            temperature=temperature,
+                            messages=[
+                                {"role": "system", "content": "You are a legal study assistant producing highly organized, chart-style cheat sheets."},
+                                {"role": "user", "content": chart_prompt},
+                            ],
+                            max_tokens=1800,
+                        )
+                        enhanced_chart = resp.choices[0].message.content.strip()
+                        st.session_state["enhanced_chart"] = enhanced_chart
+                        st.success("Enhanced chart created!")
+                except Exception as e:
+                    st.error(f"OpenAI error while creating enhanced chart: {e}")
+
+        # Display the enhanced chart
+        if st.session_state.get("enhanced_chart"):
+            st.markdown("#### Enhanced Chart Output")
+            st.markdown(st.session_state["enhanced_chart"])
+            st.download_button(
+                "Download Enhanced Chart as Markdown",
+                st.session_state["enhanced_chart"],
+                "enhanced_chart.md",
+                mime="text/markdown",
+            )
