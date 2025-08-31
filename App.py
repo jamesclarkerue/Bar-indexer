@@ -634,8 +634,39 @@ def notes_to_docx(notes_dict):
     doc = Document()
     doc.add_heading("Bar Exam Study Notes", level=0)
     for issue, notes in notes_dict.items():
+        # Add issue as heading
         doc.add_heading(issue, level=1)
-        doc.add_paragraph(notes)
+        lines = notes.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Headings
+            if line.startswith("### "):
+                doc.add_heading(line[4:], level=2)
+            elif line.startswith("## "):
+                doc.add_heading(line[3:], level=2)
+            elif line.startswith("# "):
+                doc.add_heading(line[2:], level=1)
+            # Bullet points
+            elif line.startswith(("- ", "* ")):
+                p = doc.add_paragraph(line[2:], style='List Bullet')
+            # Numbered list
+            elif re.match(r"^\d+\.\s", line):
+                p = doc.add_paragraph(line, style='List Number')
+            else:
+                # Basic formatting for bold/italic markdown
+                # Bold: **text**
+                # Italic: *text* or _text_
+                p = doc.add_paragraph()
+                matches = re.split(r"(\*\*.*?\*\*|\*.*?\*|_.*?_)", line)
+                for part in matches:
+                    if part.startswith("**") and part.endswith("**"):
+                        p.add_run(part[2:-2]).bold = True
+                    elif (part.startswith("*") and part.endswith("*")) or (part.startswith("_") and part.endswith("_")):
+                        p.add_run(part[1:-1]).italic = True
+                    else:
+                        p.add_run(part)
     return doc
 
 if st.session_state.get("issues_rows"):
