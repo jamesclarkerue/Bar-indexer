@@ -638,20 +638,28 @@ def notes_to_docx(notes_dict):
     for issue, notes in notes_dict.items():
         doc.add_heading(issue, level=1)
         lines = notes.split('\n')
+        skip_heading = True  # Skip the first heading if it matches the issue
         for line in lines:
+            orig_line = line
             line = line.rstrip()
-            if not line or line.lstrip("#").strip() == issue.strip():
+            if not line:
                 continue
 
-            # Markdown headings (##, ###, etc.) - render as docx subheadings
-            heading_match = re.match(r"^(#{2,6})\s+(.*)", line)
+            # Remove duplicated heading: skip any first heading after issue heading
+            heading_match = re.match(r"^(#+)\s+(.*)", line)
+            if skip_heading and heading_match:
+                skip_heading = False
+                continue
+            skip_heading = False
+
+            # Markdown headings (##, ###, etc.)
             if heading_match:
-                level = min(len(heading_match.group(1)), 4)
+                level = min(len(heading_match.group(1)), 4)  # 2-4
                 heading_text = heading_match.group(2).strip()
                 doc.add_heading(heading_text, level=level)
                 continue
 
-            # Fully bold/italic lines (***text***, **text**, *text*)
+            # Fully bold/italic lines (***text***, **text**, *text*) as headings/bold
             triple_bold_italic = re.match(r"^\*{3}(.+)\*{3}$", line)
             double_bold = re.match(r"^\*{2}(.+)\*{2}$", line)
             single_italic = re.match(r"^\*([^*]+)\*$", line)
@@ -662,20 +670,21 @@ def notes_to_docx(notes_dict):
                 run.italic = True
                 continue
             elif double_bold:
-                p = doc.add_paragraph()
-                run = p.add_run(double_bold.group(1).strip())
-                run.bold = True
+                # treat as subheading (level 2)
+                doc.add_heading(double_bold.group(1).strip(), level=2)
                 continue
             elif single_italic:
+                # treat as italic subheading
                 p = doc.add_paragraph()
                 run = p.add_run(single_italic.group(1).strip())
                 run.italic = True
                 continue
 
-            # Bullets and sub-bullets
-            bullet_match = re.match(r"^(\s*)([-*])\s+(.*)", line)
+            # Bullets and sub-bullets (count indent in 2 or 4 spaces or tabs)
+            bullet_match = re.match(r"^([ \t]*)([-*])\s+(.*)", line)
             if bullet_match:
-                indent = len(bullet_match.group(1)) // 2
+                indent_str = bullet_match.group(1).replace('\t', '    ')
+                indent = len(indent_str) // 4  # Every 4 spaces or tab is one level
                 text = bullet_match.group(3).strip()
                 p = doc.add_paragraph(text, style='List Bullet')
                 if indent > 0:
@@ -683,9 +692,10 @@ def notes_to_docx(notes_dict):
                 continue
 
             # Numbered list and sub-numbered
-            num_match = re.match(r"^(\s*)(\d+)\.\s+(.*)", line)
+            num_match = re.match(r"^([ \t]*)(\d+)\.\s+(.*)", line)
             if num_match:
-                indent = len(num_match.group(1)) // 2
+                indent_str = num_match.group(1).replace('\t', '    ')
+                indent = len(indent_str) // 4
                 text = num_match.group(3).strip()
                 p = doc.add_paragraph(text, style='List Number')
                 if indent > 0:
@@ -698,22 +708,20 @@ def notes_to_docx(notes_dict):
             for m in re.finditer(r"(\*\*\*([^\*]+)\*\*\*|\*\*([^\*]+)\*\*|\*([^\*]+)\*)", line):
                 if m.start() > cursor:
                     p.add_run(line[cursor:m.start()])
-                formatted = m.group(0)
-                if formatted.startswith('***'):
+                if m.group(2):
                     run = p.add_run(m.group(2))
                     run.bold = True
                     run.italic = True
-                elif formatted.startswith('**'):
+                elif m.group(3):
                     run = p.add_run(m.group(3))
                     run.bold = True
-                elif formatted.startswith('*'):
+                elif m.group(4):
                     run = p.add_run(m.group(4))
                     run.italic = True
                 cursor = m.end()
             if cursor < len(line):
                 p.add_run(line[cursor:])
     return doc
-
 # ---- Streamlit UI Section ----
 if st.session_state.get("issues_rows"):
     st.markdown("## Study Notes")
