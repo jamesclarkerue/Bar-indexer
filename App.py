@@ -231,25 +231,17 @@ with st.sidebar:
     debug_show_raw = st.checkbox("Show raw model output per chunk", value=False)
 
 # ===================== Upload PDF (with fallback + preview) =====================
+import streamlit as st
+import io
+from typing import List, Tuple, Dict
+
 if "pages_text" not in st.session_state:
     st.session_state["pages_text"] = []
 
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 
-if uploaded:
-    # Prompt for original page numbers right after upload
-    start_page = st.number_input(
-        "Enter the starting page number in the original materials:",
-        min_value=1, value=1, step=1
-    )
-    end_page = st.number_input(
-        "Enter the ending page number in the original materials:",
-        min_value=start_page, value=start_page, step=1
-    )
-    # Now you can use start_page and end_page in your processing
-    # ... rest of your PDF extraction/preview logic ...
-
 def extract_with_pymupdf(pdf_bytes: bytes) -> List[Tuple[int, str]]:
+    import fitz
     out: List[Tuple[int, str]] = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     for i, page in enumerate(doc):
@@ -278,6 +270,15 @@ def extract_with_pdfminer_if_available(pdf_bytes: bytes, page_numbers: List[int]
     return out
 
 if uploaded is not None:
+    # Prompt for original page numbers right after upload
+    start_page = st.number_input(
+        "Enter the starting page number in the original materials:",
+        min_value=1, value=1, step=1
+    )
+    end_page = st.number_input(
+        "Enter the ending page number in the original materials:",
+        min_value=start_page, value=start_page, step=1
+    )
     try:
         pdf_bytes = uploaded.getvalue()
         raw = extract_with_pymupdf(pdf_bytes)
@@ -294,18 +295,8 @@ if uploaded is not None:
             else:
                 st.info("pdfminer.six not installed or fallback unavailable. If many pages are blank, run OCR and re-upload.")
 
-        # Assume user_start_page is the value the user entered in your input box
-st.session_state["pages_text"] = [f"[Page {user_start_page + i}]\n{t}" for i, (p, t) in enumerate(raw)]
-        total_chars = sum(len(t) for (_, t) in raw)
-        st.success(f"Loaded {len(st.session_state['pages_text'])} pages from {uploaded.name} • {total_chars} characters extracted")
-        preview_n = min(2, len(st.session_state["pages_text"]))
-        st.caption("Preview (to confirm we actually have text):")
-        st.text("\n\n".join(st.session_state["pages_text"][:preview_n])[:3000] or "(no extractable text)")
-        empty_cnt = sum(1 for (_, t) in raw if not (t and t.strip()))
-        if empty_cnt >= max(1, int(len(raw) * 0.7)):
-            st.warning("Most pages had no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+        # Use start_page from the number input, not a variable that may be undefined!
+        st.session_state["pages
 
 # ===================== Step 1 • Generate exam-style issues (with page refs) =====================
 st.subheader("Step 1 • Generate exam-style issues (with page refs)")
