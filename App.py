@@ -236,7 +236,7 @@ import io
 from typing import List, Tuple, Dict
 
 if "pages_text" not in st.session_state:
-    st.session_state["pages_text"] = []
+    st.session_state["pages_text"] = [f"[Page {start_page + i}]\n{t}" for i, (p, t) in enumerate(raw)]
 
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 
