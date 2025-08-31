@@ -638,26 +638,28 @@ def notes_to_docx(notes_dict):
         doc.add_paragraph(notes)
     return doc
 
-# Main Study Notes Section
 if st.session_state.get("issues_rows"):
     st.markdown("## Study Notes")
     notes_dict = st.session_state.get("study_notes_dict", {})
+
+    # Optionally: show per-issue editable text areas
     for idx, issue_row in enumerate(st.session_state["issues_rows"]):
         issue = issue_row.get("issue", f"Issue {idx+1}")
-        rule = issue_row.get("rule_or_test", "")
-        authorities = issue_row.get("authorities", "")
-
-        st.markdown(f"**{issue}**")
         default_notes = notes_dict.get(issue, "")
         notes = st.text_area(f"Study Notes for {issue}", value=default_notes, key=f"notes_{idx}")
+        st.session_state.setdefault("study_notes_dict", {})[issue] = notes
 
-        # Generate button
-        if st.button(f"Generate Study Notes for {issue}", key=f"gen_notes_{idx}"):
-            if client is None:
-                st.warning("OpenAI client not configured.")
-            else:
+    # Generate all study notes with one button
+    if st.button("Generate All Study Notes"):
+        if client is None:
+            st.warning("OpenAI client not configured.")
+        else:
+            for idx, issue_row in enumerate(st.session_state["issues_rows"]):
+                issue = issue_row.get("issue", f"Issue {idx+1}")
+                rule = issue_row.get("rule_or_test", "")
+                authorities = issue_row.get("authorities", "")
                 prompt = generate_study_notes_prompt(issue, rule, authorities)
-                with st.spinner("Generating notes..."):
+                with st.spinner(f"Generating notes for {issue}..."):
                     resp = client.chat.completions.create(
                         model=model,
                         temperature=temperature,
@@ -667,16 +669,22 @@ if st.session_state.get("issues_rows"):
                         ],
                         max_tokens=500,
                     )
-                    notes = resp.choices[0].message.content.strip()
-                    st.session_state.setdefault("study_notes_dict", {})[issue] = notes
-                    st.success("Study notes generated!")
+                    note = resp.choices[0].message.content.strip()
+                    st.session_state.setdefault("study_notes_dict", {})[issue] = note
+            st.success("All study notes generated!")
 
-        # Save edited notes
-        st.session_state.setdefault("study_notes_dict", {})[issue] = notes
-
-    # Download all notes as Word
+    # Combine notes into one markdown preview
     if st.session_state.get("study_notes_dict"):
-        doc = notes_to_docx(st.session_state["study_notes_dict"])
+        all_notes = st.session_state["study_notes_dict"]
+        notes_markdown = ""
+        for issue, notes in all_notes.items():
+            notes_markdown += f"### {issue}\n{notes}\n\n"
+        st.markdown("---")
+        st.markdown("### All Study Notes")
+        st.markdown(notes_markdown)
+
+        # Download all notes as Word
+        doc = notes_to_docx(all_notes)
         docx_io = io.BytesIO()
         doc.save(docx_io)
         docx_io.seek(0)
