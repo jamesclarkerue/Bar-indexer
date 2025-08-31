@@ -294,7 +294,8 @@ if uploaded is not None:
             else:
                 st.info("pdfminer.six not installed or fallback unavailable. If many pages are blank, run OCR and re-upload.")
 
-        st.session_state["pages_text"] = [f"[Page {p}]\n{t}" for (p, t) in raw]
+        # Assume user_start_page is the value the user entered in your input box
+st.session_state["pages_text"] = [f"[Page {user_start_page + i}]\n{t}" for i, (p, t) in enumerate(raw)]
         total_chars = sum(len(t) for (_, t) in raw)
         st.success(f"Loaded {len(st.session_state['pages_text'])} pages from {uploaded.name} • {total_chars} characters extracted")
         preview_n = min(2, len(st.session_state["pages_text"]))
