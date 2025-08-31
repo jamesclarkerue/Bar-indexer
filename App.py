@@ -642,18 +642,12 @@ if st.session_state.get("issues_rows"):
     st.markdown("## Study Notes")
     notes_dict = st.session_state.get("study_notes_dict", {})
 
-    # Optionally: show per-issue editable text areas
-    for idx, issue_row in enumerate(st.session_state["issues_rows"]):
-        issue = issue_row.get("issue", f"Issue {idx+1}")
-        default_notes = notes_dict.get(issue, "")
-        notes = st.text_area(f"Study Notes for {issue}", value=default_notes, key=f"notes_{idx}")
-        st.session_state.setdefault("study_notes_dict", {})[issue] = notes
-
-    # Generate all study notes with one button
+    # Single button to generate all study notes
     if st.button("Generate All Study Notes"):
         if client is None:
             st.warning("OpenAI client not configured.")
         else:
+            notes_dict = {}
             for idx, issue_row in enumerate(st.session_state["issues_rows"]):
                 issue = issue_row.get("issue", f"Issue {idx+1}")
                 rule = issue_row.get("rule_or_test", "")
@@ -670,10 +664,11 @@ if st.session_state.get("issues_rows"):
                         max_tokens=500,
                     )
                     note = resp.choices[0].message.content.strip()
-                    st.session_state.setdefault("study_notes_dict", {})[issue] = note
+                    notes_dict[issue] = note
+            st.session_state["study_notes_dict"] = notes_dict
             st.success("All study notes generated!")
 
-    # Combine notes into one markdown preview
+    # Show all notes together as markdown and provide download option
     if st.session_state.get("study_notes_dict"):
         all_notes = st.session_state["study_notes_dict"]
         notes_markdown = ""
@@ -683,7 +678,7 @@ if st.session_state.get("issues_rows"):
         st.markdown("### All Study Notes")
         st.markdown(notes_markdown)
 
-        # Download all notes as Word
+        # Download as DOCX
         doc = notes_to_docx(all_notes)
         docx_io = io.BytesIO()
         doc.save(docx_io)
