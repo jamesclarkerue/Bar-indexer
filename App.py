@@ -236,7 +236,7 @@ import io
 from typing import List, Tuple, Dict
 
 if "pages_text" not in st.session_state:
-    st.session_state["pages_text"] = [f"[Page {start_page + i}]\n{t}" for i, (p, t) in enumerate(raw)]
+    st.session_state["pages_text"] = []
 
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 
@@ -270,7 +270,6 @@ def extract_with_pdfminer_if_available(pdf_bytes: bytes, page_numbers: List[int]
     return out
 
 if uploaded is not None:
-    # Prompt for original page numbers right after upload
     start_page = st.number_input(
         "Enter the starting page number in the original materials:",
         min_value=1, value=1, step=1
@@ -295,8 +294,26 @@ if uploaded is not None:
             else:
                 st.info("pdfminer.six not installed or fallback unavailable. If many pages are blank, run OCR and re-upload.")
 
-        # Use start_page from the number input, not a variable that may be undefined!
-        st.session_state["pages
+        # Map extracted pages to user-supplied page numbers
+        st.session_state["pages_text"] = [f"[Page {start_page + i}]\n{t}" for i, (p, t) in enumerate(raw)]
+        total_chars = sum(len(t) for (_, t) in raw)
+        st.success(f"Loaded {len(st.session_state['pages_text'])} pages from {uploaded.name} • {total_chars} characters extracted")
+        preview_n = min(2, len(st.session_state["pages_text"]))
+        st.caption("Preview (to confirm we actually have text):")
+        st.text("\n\n".join(st.session_state["pages_text"][:preview_n])[:3000] or "(no extractable text)")
+        empty_cnt = sum(1 for (_, t) in raw if not (t and t.strip()))
+        if empty_cnt >= max(1, int(len(raw) * 0.7)):
+            st.warning("Most pages had no extractable text. Your PDF may be scanned images. Run OCR (e.g., Acrobat 'Recognize Text') and re-upload.")
+
+        # Warn if the number of extracted pages doesn't match the user range
+        expected_pages = end_page - start_page + 1
+        if len(raw) != expected_pages:
+            st.warning(
+                f"⚠️ You entered pages {start_page}-{end_page} ({expected_pages} pages), "
+                f"but the PDF contains {len(raw)} pages. Double-check your input for accuracy."
+            )
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
 
 # ===================== Step 1 • Generate exam-style issues (with page refs) =====================
 st.subheader("Step 1 • Generate exam-style issues (with page refs)")
