@@ -236,6 +236,19 @@ if "pages_text" not in st.session_state:
 
 uploaded = st.file_uploader("Upload PDF (<= 200 MB)", type=["pdf"])
 
+if uploaded:
+    # Prompt for original page numbers right after upload
+    start_page = st.number_input(
+        "Enter the starting page number in the original materials:",
+        min_value=1, value=1, step=1
+    )
+    end_page = st.number_input(
+        "Enter the ending page number in the original materials:",
+        min_value=start_page, value=start_page, step=1
+    )
+    # Now you can use start_page and end_page in your processing
+    # ... rest of your PDF extraction/preview logic ...
+
 def extract_with_pymupdf(pdf_bytes: bytes) -> List[Tuple[int, str]]:
     out: List[Tuple[int, str]] = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
