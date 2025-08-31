@@ -619,6 +619,8 @@ if st.session_state.get("enhanced_chart"):
 import streamlit as st
 import io
 from docx import Document
+from docx.shared import Pt
+import re
 
 def generate_study_notes_prompt(issue_name, rule, authorities):
     prompt = (
@@ -634,27 +636,22 @@ def notes_to_docx(notes_dict):
     doc = Document()
     doc.add_heading("Bar Exam Study Notes", level=0)
     for issue, notes in notes_dict.items():
-        # Add issue as heading (level 1)
         doc.add_heading(issue, level=1)
         lines = notes.split('\n')
         for line in lines:
             line = line.rstrip()
-            if not line:
+            if not line or line.lstrip("#").strip() == issue.strip():
                 continue
 
-            # Remove duplicated heading if it matches issue title or markdown heading
-            if line.lstrip("#").strip() == issue.strip():
-                continue
-
-            # Headings/subheadings (##, ### etc.)
-            heading_match = re.match(r"^(#+)\s+(.*)", line)
+            # Markdown headings (##, ###, etc.) - render as docx subheadings
+            heading_match = re.match(r"^(#{2,6})\s+(.*)", line)
             if heading_match:
-                level = len(heading_match.group(1))
+                level = min(len(heading_match.group(1)), 4)
                 heading_text = heading_match.group(2).strip()
-                doc.add_heading(heading_text, level=min(level+1, 4))  # +1 so main issue is always top
+                doc.add_heading(heading_text, level=level)
                 continue
 
-            # Fully bold/italics lines (***text***, **text**, *text*)
+            # Fully bold/italic lines (***text***, **text**, *text*)
             triple_bold_italic = re.match(r"^\*{3}(.+)\*{3}$", line)
             double_bold = re.match(r"^\*{2}(.+)\*{2}$", line)
             single_italic = re.match(r"^\*([^*]+)\*$", line)
@@ -678,11 +675,11 @@ def notes_to_docx(notes_dict):
             # Bullets and sub-bullets
             bullet_match = re.match(r"^(\s*)([-*])\s+(.*)", line)
             if bullet_match:
-                indent = len(bullet_match.group(1)) // 2  # every 2 spaces is one level
+                indent = len(bullet_match.group(1)) // 2
                 text = bullet_match.group(3).strip()
                 p = doc.add_paragraph(text, style='List Bullet')
-                # Indent for sub-bullets
-                p.paragraph_format.left_indent = Pt(18 * indent)
+                if indent > 0:
+                    p.paragraph_format.left_indent = Pt(18 * indent)
                 continue
 
             # Numbered list and sub-numbered
@@ -691,14 +688,14 @@ def notes_to_docx(notes_dict):
                 indent = len(num_match.group(1)) // 2
                 text = num_match.group(3).strip()
                 p = doc.add_paragraph(text, style='List Number')
-                p.paragraph_format.left_indent = Pt(18 * indent)
+                if indent > 0:
+                    p.paragraph_format.left_indent = Pt(18 * indent)
                 continue
 
             # Inline bold/italic for regular lines
             p = doc.add_paragraph()
             cursor = 0
             for m in re.finditer(r"(\*\*\*([^\*]+)\*\*\*|\*\*([^\*]+)\*\*|\*([^\*]+)\*)", line):
-                # Add text before formatting
                 if m.start() > cursor:
                     p.add_run(line[cursor:m.start()])
                 formatted = m.group(0)
@@ -715,5 +712,54 @@ def notes_to_docx(notes_dict):
                 cursor = m.end()
             if cursor < len(line):
                 p.add_run(line[cursor:])
-
     return doc
+
+# ---- Streamlit UI Section ----
+if st.session_state.get("issues_rows"):
+    st.markdown("## Study Notes")
+
+    if st.button("Generate All Study Notes"):
+        if 'client' not in globals() or client is None:
+            st.warning("OpenAI client not configured.")
+        else:
+            notes_dict = {}
+            for idx, issue_row in enumerate(st.session_state["issues_rows"]):
+                issue = issue_row.get("issue", f"Issue {idx+1}")
+                rule = issue_row.get("rule_or_test", "")
+                authorities = issue_row.get("authorities", "")
+                prompt = generate_study_notes_prompt(issue, rule, authorities)
+                with st.spinner(f"Generating notes for {issue}..."):
+                    resp = client.chat.completions.create(
+                        model=model,
+                        temperature=temperature,
+                        messages=[
+                            {"role": "system", "content": "You are a legal bar exam coach who writes smart, concise, practical study notes."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=500,
+                    )
+                    note = resp.choices[0].message.content.strip()
+                    notes_dict[issue] = note
+            st.session_state["study_notes_dict"] = notes_dict
+            st.success("All study notes generated!")
+
+    if st.session_state.get("study_notes_dict"):
+        all_notes = st.session_state["study_notes_dict"]
+        notes_markdown = ""
+        for issue, notes in all_notes.items():
+            notes_markdown += f"### {issue}\n{notes}\n\n"
+        st.markdown("---")
+        st.markdown("### All Study Notes")
+        st.markdown(notes_markdown)
+
+        doc = notes_to_docx(all_notes)
+        docx_io = io.BytesIO()
+        doc.save(docx_io)
+        docx_io.seek(0)
+        st.download_button(
+            "Download All Study Notes as Word (.docx)",
+            data=docx_io,
+            file_name="study_notes.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="study_notes_docx_btn"
+        )
